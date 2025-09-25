@@ -1,0 +1,11 @@
+# For the Telegram Bot Framework
+python-telegram-bot==21.0.1
+
+# For making HTTP requests to the Steam API
+requests
+
+# For the OpenAI API
+openai
+
+# For loading secret keys from the .env file
+python-dotenv
