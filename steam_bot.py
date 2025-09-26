@@ -56,7 +56,7 @@ def get_steam_player_rating(app_id: str) -> dict | None:
 
 def get_itad_deal(app_id: str, game_name: str) -> dict | None:
     """
-    Fetches the best deal using the ITAD API, now with the correct POST method for prices.
+    Fetches the best deal using the ITAD API with correct GET method for prices.
     """
     game_slug = None
 
@@ -85,20 +85,31 @@ def get_itad_deal(app_id: str, game_name: str) -> dict | None:
             logger.error(f"ITAD Title search fallback failed: {e}")
             return None
 
-    # Step 3: If we have a slug, get the best prices using a POST request
+    # Step 3: If we have a slug, get the best prices using a GET request
     if game_slug:
         try:
-            prices_url = f"https://api.isthereanydeal.com/games/prices/v2?key={ITAD_API_KEY}"
-            payload = {
-                "plains": [game_slug],
-                "shops": ["steam", "humble", "gog", "fanatical", "greenmangaming", "wingamestore"]
-            }
-            # The fix is here: using requests.post() with a json payload
-            response = requests.post(prices_url, json=payload, timeout=10)
+            # Build the URL with query parameters for GET request
+            shops = ["steam", "humble", "gog", "fanatical", "greenmangaming", "wingamestore"]
+            shops_param = "&".join([f"shops[]={shop}" for shop in shops])
+            prices_url = f"https://api.isthereanydeal.com/games/prices/v2?key={ITAD_API_KEY}&id={game_slug}&{shops_param}"
+            
+            # Use GET request instead of POST
+            response = requests.get(prices_url, timeout=10)
             response.raise_for_status()
             
-            price_data = response.json()[0]
-            if price_data and price_data.get("deals"):
+            price_data = response.json()
+            # The response structure might be different for GET vs POST
+            if price_data and isinstance(price_data, list) and len(price_data) > 0:
+                game_data = price_data[0]
+                if game_data.get("deals"):
+                    best_deal = game_data["deals"][0]
+                    return {
+                        "price": best_deal["price"]["amount"],
+                        "store": best_deal["shop"]["name"],
+                        "cut": best_deal["cut"]
+                    }
+            elif price_data and price_data.get("deals"):
+                # Alternative response structure
                 best_deal = price_data["deals"][0]
                 return {
                     "price": best_deal["price"]["amount"],
