@@ -60,24 +60,39 @@ def get_steam_player_rating(app_id: str) -> dict | None:
         logger.error(f"Error fetching Steam player rating: {e}")
     return None
 
-def get_itad_deal(app_id: str) -> dict | None:
-    """Fetches the best current deal from IsThereAnyDeal.com."""
+def get_itad_deal(app_id: str, game_name: str) -> dict | None:
+    """Fetches the best current deal from IsThereAnyDeal.com, with a title-search fallback."""
     game_plain = None
+    
+    # --- Attempt 1: Direct lookup using AppID (the original method) ---
     try:
-        # First, get the ITAD 'plain' ID for the game
         plain_url = f"https://api.isthereanydeal.com/v02/game/plain/?key={ITAD_API_KEY}&shop=steam&game_id=app%2F{app_id}"
         response = requests.get(plain_url, timeout=10)
-        response.raise_for_status()
-        plain_data = response.json()
-        if plain_data and plain_data.get(".meta") and plain_data[".meta"].get("active"):
-             game_plain = plain_data["data"]["plain"]
+        # A 404 here is a possible outcome, so we don't raise an error for it
+        if response.status_code == 200:
+            plain_data = response.json()
+            if plain_data and plain_data.get(".meta") and plain_data[".meta"].get("active"):
+                game_plain = plain_data["data"]["plain"]
     except requests.exceptions.RequestException as e:
-        logger.error(f"ITAD Plain lookup failed: {e}")
-        return None
+        logger.error(f"ITAD Plain lookup (Attempt 1) failed: {e}")
 
+    # --- Attempt 2: Fallback search using game title if first attempt fails ---
+    if not game_plain:
+        logger.info(f"ITAD Plain lookup failed for AppID {app_id}. Trying fallback search with title: '{game_name}'")
+        try:
+            search_url = f"https://api.isthereanydeal.com/v01/search/search/?key={ITAD_API_KEY}&q={requests.utils.quote(game_name)}&limit=1"
+            response = requests.get(search_url, timeout=10)
+            response.raise_for_status()
+            search_data = response.json()
+            if search_data and search_data.get("data") and search_data["data"].get("list"):
+                game_plain = search_data["data"]["list"][0]["plain"]
+        except requests.exceptions.RequestException as e:
+            logger.error(f"ITAD Title search (Attempt 2) failed: {e}")
+            return None
+
+    # --- If we have a 'plain' from either method, get the price ---
     if game_plain:
         try:
-            # Now, get the best price for that 'plain' ID
             prices_url = f"https://api.isthereanydeal.com/v01/game/prices/?key={ITAD_API_KEY}&plains={game_plain}&shops=steam,humble,gog,fanatical,greenmangaming,wingamestore"
             response = requests.get(prices_url, timeout=10)
             response.raise_for_status()
@@ -91,6 +106,8 @@ def get_itad_deal(app_id: str) -> dict | None:
                 }
         except requests.exceptions.RequestException as e:
             logger.error(f"ITAD Price lookup failed: {e}")
+    
+    logger.warning(f"Could not find any ITAD data for '{game_name}'")
     return None
 
 def analyze_game_with_llm(details: dict) -> dict | None:
@@ -152,7 +169,7 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     # --- Gather all data in parallel ---
     game_details = get_steam_game_details(app_id)
     player_rating = get_steam_player_rating(app_id)
-    itad_deal = get_itad_deal(app_id)
+    itad_deal = get_itad_deal(app_id, game_name)
 
     if not game_details:
         await update.message.reply_text("Sorry, I couldn't fetch details for that game.", quote=True)
