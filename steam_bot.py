@@ -31,7 +31,7 @@ def get_steam_app_id(url: str) -> str | None:
     return match.group(1) if match else None
 
 def get_steam_game_details(app_id: str) -> dict | None:
-    url = f"https://store.steampowered.com/api/appdetails?appids={app_id}"
+    url = f"https://store.steampowered.com/api/appdetails?appids={app_id}&cc=US"
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
@@ -187,7 +187,8 @@ def get_itad_deal(app_id: str, game_name: str) -> dict | None:
     # Step 3: If we have a game ID, get the best prices using correct POST request
     if game_id:
         try:
-            prices_url = f"https://api.isthereanydeal.com/games/prices/v2?key={ITAD_API_KEY}"
+            # Force USD currency by adding country parameter
+            prices_url = f"https://api.isthereanydeal.com/games/prices/v2?key={ITAD_API_KEY}&country=US"
             
             # POST request body should be a JSON array of game IDs
             payload = [game_id]
@@ -282,7 +283,24 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_steam_link))
 
     logger.info("Bot is starting...")
-    application.run_polling(drop_pending_updates=True)
+    
+    try:
+        # Use polling with timeout to allow clean shutdown
+        application.run_polling(
+            drop_pending_updates=True,
+            poll_interval=1.0,  # Check for updates every 1 second
+            timeout=30,         # 30 second timeout for long polling
+            read_timeout=20,    # 20 second read timeout
+            write_timeout=20,   # 20 second write timeout
+            connect_timeout=20, # 20 second connection timeout
+            close_loop=False    # Don't close the event loop
+        )
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt, shutting down...")
+    except Exception as e:
+        logger.error(f"Bot encountered an error: {e}")
+    finally:
+        logger.info("Bot shutdown complete.")
 
 if __name__ == "__main__":
     main()
