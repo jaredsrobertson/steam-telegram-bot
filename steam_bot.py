@@ -4,6 +4,9 @@ import json
 import logging
 import requests
 import openai
+import asyncio
+import signal
+import sys
 from dotenv import load_dotenv
 
 from telegram import Update
@@ -23,6 +26,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 openai.api_key = OPENAI_API_KEY
+
+# Global shutdown flag
+shutdown_event = asyncio.Event()
 
 # --- Helper Functions ---
 
@@ -252,14 +258,14 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         f"{rating_emoji} <i>{rating_text}</i>\n",
         f"🏷️ {game_genre}",
         f"👥 {player_analysis}\n",
-        f"💰 <b>Price on Steam:</b> <a href='{steam_url}'>{steam_price}</a>🔗"
+        f"💰 <b>Price on Steam:</b> <a href='{steam_url}'>{steam_price}🔗</a>"
     ]
 
     if itad_deal:
         deal_url = itad_deal.get('url', '')
         if deal_url:
             # Make the best deal price a clickable link
-            deal_text = f"🔥 <b>Best Deal:</b> <a href='{deal_url}'><b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}</a>🔗"
+            deal_text = f"🔥 <b>Best Deal:</b> <a href='{deal_url}'><b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}🔗</a>"
         else:
             # Fallback if no URL is provided
             deal_text = f"🔥 <b>Best Deal:</b> <b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}"
@@ -272,35 +278,84 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         disable_web_page_preview=True
     )
 
+# --- Shutdown Handlers ---
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals"""
+    logger.info(f"Received signal {signum}, initiating shutdown...")
+    shutdown_event.set()
+
+async def shutdown_application(application):
+    """Gracefully shutdown the application"""
+    logger.info("Shutting down application...")
+    await application.stop()
+    await application.shutdown()
+    logger.info("Application shutdown complete")
+
 # --- Main Bot Function ---
 
-def main() -> None:
+async def main():
     if not all([TELEGRAM_TOKEN, STEAM_API_KEY, OPENAI_API_KEY, ITAD_API_KEY]):
         logger.error("One or more API keys are missing! Check your .env file.")
         return
 
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    # Setup signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Build application with proper timeout settings
+    application = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .get_updates_read_timeout(30)      # 30 second read timeout
+        .get_updates_write_timeout(30)     # 30 second write timeout
+        .get_updates_connect_timeout(30)   # 30 second connect timeout
+        .read_timeout(30)                  # General read timeout
+        .write_timeout(30)                 # General write timeout
+        .build()
+    )
+    
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_steam_link))
 
     logger.info("Bot is starting...")
     
     try:
-        # Use polling with timeout to allow clean shutdown
-        application.run_polling(
+        # Initialize and start the bot
+        await application.initialize()
+        await application.start()
+        
+        # Clear any pending updates and start polling
+        await application.updater.start_polling(
             drop_pending_updates=True,
-            poll_interval=1.0,  # Check for updates every 1 second
-            timeout=30,         # 30 second timeout for long polling
-            read_timeout=20,    # 20 second read timeout
-            write_timeout=20,   # 20 second write timeout
-            connect_timeout=20, # 20 second connection timeout
-            close_loop=False    # Don't close the event loop
+            poll_interval=1.0,
+            timeout=10
         )
-    except KeyboardInterrupt:
-        logger.info("Received keyboard interrupt, shutting down...")
+        
+        logger.info("Bot started successfully")
+        
+        # Wait for shutdown signal
+        await shutdown_event.wait()
+        
     except Exception as e:
         logger.error(f"Bot encountered an error: {e}")
     finally:
-        logger.info("Bot shutdown complete.")
+        # Graceful shutdown
+        await shutdown_application(application)
 
 if __name__ == "__main__":
-    main()
+    # Clear any existing Telegram sessions first
+    try:
+        import requests
+        # Delete webhook if set and clear pending updates
+        webhook_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook"
+        requests.get(webhook_url, timeout=5)
+        
+        updates_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?offset=-1&timeout=1"
+        requests.get(updates_url, timeout=5)
+        
+        logger.info("Cleared Telegram session")
+    except Exception as e:
+        logger.warning(f"Could not clear Telegram session: {e}")
+    
+    # Run the bot
+    asyncio.run(main())

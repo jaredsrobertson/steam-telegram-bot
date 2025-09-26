@@ -9,3 +9,5 @@ openai
 
 # For loading secret keys from the .env file
 python-dotenv
+
+flask
