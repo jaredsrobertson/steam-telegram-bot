@@ -166,31 +166,34 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     logger.info(f"Detected Steam link for App ID: {app_id}")
     
-    # --- Gather all data in parallel ---
+    # --- Step 1: Get primary game details first ---
     game_details = get_steam_game_details(app_id)
-    player_rating = get_steam_player_rating(app_id)
-    itad_deal = get_itad_deal(app_id, game_name)
-
     if not game_details:
         await update.message.reply_text("Sorry, I couldn't fetch details for that game.", quote=True)
         return
         
+    # --- Step 2: Define game_name immediately ---
     game_name = game_details.get("name", "Unknown Game")
-    steam_price = format_price(game_details)
 
+    # --- Step 3: Now, gather all other data ---
+    player_rating = get_steam_player_rating(app_id)
+    itad_deal = get_itad_deal(app_id, game_name)
     analysis = analyze_game_with_llm(game_details)
+
     if not analysis:
         await update.message.reply_text("Sorry, the summary AI is having trouble right now.", quote=True)
         return
 
-    # --- Build the final message ---
+    # --- Step 4: Build and send the final message ---
+    steam_price = format_price(game_details)
     rating_text = player_rating.get('review_score_desc', 'No rating found') if player_rating else 'No rating found'
     
     reply_parts = [
-        f"**{game_name}**\n",
-        f"{analysis['summary']}\n",
+        f"🎮 **{game_name}** 🎮\n",
+        f"**Summary:** {analysis['summary']}\n",
         f"**Players:** {analysis['players']}",
         f"**Steam Rating:** {rating_text}\n",
+        "---",
         f"**Price on Steam:** {steam_price}"
     ]
 
