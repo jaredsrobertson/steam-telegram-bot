@@ -254,11 +254,12 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     steam_url = f"https://store.steampowered.com/app/{app_id}/"
     
     reply_parts = [
+        f"",
         f"<b>{game_name}</b>",
-        f"{rating_emoji} <i>{rating_text}</i>\n",
-        f"🏷️ {game_genre}",
+        f"{rating_emoji} <code>{rating_text}</code>\n",
+        f"🏷️ <i>{game_genre}</i>",
         f"👥 {player_analysis}\n",
-        f"💰 <b>Price on Steam:</b> <a href='{steam_url}'>{steam_price}🔗</a>"
+        f"💰 <b>Steam:</b> <a href='{steam_url}'>{steam_price}🔗</a>"
     ]
 
     if itad_deal:
@@ -288,9 +289,28 @@ def signal_handler(signum, frame):
 async def shutdown_application(application):
     """Gracefully shutdown the application"""
     logger.info("Shutting down application...")
-    await application.stop()
-    await application.shutdown()
-    logger.info("Application shutdown complete")
+    try:
+        # Stop the updater first (this stops polling)
+        if application.updater.running:
+            await application.updater.stop()
+            logger.info("Updater stopped")
+        
+        # Then stop the application
+        await application.stop()
+        logger.info("Application stopped")
+        
+        # Finally shutdown
+        await application.shutdown()
+        logger.info("Application shutdown complete")
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}")
+        # Force shutdown if graceful shutdown fails
+        try:
+            await application.updater.stop()
+            await application.stop()
+            await application.shutdown()
+        except:
+            pass
 
 # --- Main Bot Function ---
 
