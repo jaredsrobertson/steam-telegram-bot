@@ -54,31 +54,54 @@ def get_steam_player_rating(app_id: str) -> dict | None:
         logger.error(f"Error fetching Steam player rating: {e}")
     return None
 
-def analyze_game_with_llm(details: dict) -> dict | None:
+def get_game_genres(details: dict) -> str:
+    """Extract and format game genres from Steam API data"""
+    genres = details.get('genres', [])
+    if genres:
+        # Get the first 3 genres to keep it concise
+        genre_names = [genre['description'] for genre in genres[:3]]
+        return ', '.join(genre_names)
+    
+    # Fallback to categories if no genres available
+    categories = details.get('categories', [])
+    if categories:
+        # Filter for genre-like categories
+        genre_categories = [cat['description'] for cat in categories 
+                          if any(term in cat['description'].lower() 
+                                for term in ['action', 'adventure', 'strategy', 'rpg', 'simulation', 'sports', 'racing'])]
+        if genre_categories:
+            return ', '.join(genre_categories[:2])
+    
+    return "Genre not available"
+
+def analyze_players_with_llm(details: dict) -> str | None:
+    """Use LLM to analyze player count information"""
     game_name = details.get("name", "Unknown Game")
-    description = details.get("detailed_description", "")
     categories = [cat['description'] for cat in details.get('categories', [])]
 
     prompt = f"""
-    You are an expert game analyst. Analyze the provided game information for "{game_name}" and return a JSON object with two keys: "summary" and "players".
-    Instructions:
-    1.  For "summary": Write a short, engaging summary (1-2 sentences max). Do not state the game title in the summary.
-    2.  For "players": Find the specific number of players (e.g., "Up to 4 players"). If none is mentioned, use general categories (e.g., "Single-player, Online Co-op").
-    Your final output must be a valid JSON object.
+    You are an expert game analyst. Analyze the provided game information for "{game_name}" and determine the player count/multiplayer options.
+    
+    Categories: {categories}
+    
+    Return ONLY the player information in this format:
+    - For specific numbers: "Up to 4 players", "2-8 players", etc.
+    - For general categories: "Single-player", "Single-player, Co-op", "Single-player, Online Multiplayer", etc.
+    
+    Be concise and specific. Do not include any other text or explanation.
     """
     try:
         client = openai.OpenAI()
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": "You are a helpful game analyst that always responds in valid JSON."},
+                {"role": "system", "content": "You are a helpful game analyst that provides concise player count information."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3, max_tokens=100
+            temperature=0.3, max_tokens=50
         )
-        content = response.choices[0].message.content
-        return json.loads(content)
+        content = response.choices[0].message.content.strip()
+        return content
     except Exception as e:
         logger.error(f"Error processing LLM response: {e}")
     return None
@@ -89,8 +112,6 @@ def format_price(details: dict) -> str:
     if "price_overview" in details:
         return details["price_overview"]["final_formatted"]
     return "Price not available"
-
-# --- Main Telegram Handler ---
 
 def get_itad_deal(app_id: str, game_name: str) -> dict | None:
     """
@@ -169,10 +190,13 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     player_rating = get_steam_player_rating(app_id)
     itad_deal = get_itad_deal(app_id, game_name)
-    analysis = analyze_game_with_llm(game_details)
+    
+    # Get genre from Steam data and player info from LLM
+    game_genre = get_game_genres(game_details)
+    player_analysis = analyze_players_with_llm(game_details)
 
-    if not analysis:
-        await update.message.reply_text("Sorry, the summary AI is having trouble right now.", quote=True)
+    if not player_analysis:
+        await update.message.reply_text("Sorry, the player analysis AI is having trouble right now.", quote=True)
         return
 
     steam_price = format_price(game_details)
@@ -184,8 +208,8 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     reply_parts = [
         f"<b>{game_name}</b>",
         f"👍 {rating_text}",
-        f"🎮 {analysis['players']}\n",
-        f"{analysis['summary']}\n",
+        f"🎯 {game_genre}",
+        f"🎮 {player_analysis}\n",
         f"<b>Price on Steam:</b> <a href='{steam_url}'>{steam_price}</a>"
     ]
 
@@ -199,7 +223,7 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             deal_text = f"<b>Best Deal:</b> <b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}"
         reply_parts.append(deal_text)
     
-    await update.message.reply_text("\n".join(reply_parts), parse_mode='HTML', quote=True)
+    await update.message.reply_text("\n".join(reply_parts), parse_mode='HTML', quote=True, disable_web_page_preview=True)
 
 # --- Main Bot Function ---
 
