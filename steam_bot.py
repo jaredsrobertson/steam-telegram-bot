@@ -54,6 +54,44 @@ def get_steam_player_rating(app_id: str) -> dict | None:
         logger.error(f"Error fetching Steam player rating: {e}")
     return None
 
+def analyze_game_with_llm(details: dict) -> dict | None:
+    game_name = details.get("name", "Unknown Game")
+    description = details.get("detailed_description", "")
+    categories = [cat['description'] for cat in details.get('categories', [])]
+
+    prompt = f"""
+    You are an expert game analyst. Analyze the provided game information for "{game_name}" and return a JSON object with two keys: "summary" and "players".
+    Instructions:
+    1.  For "summary": Write a short, engaging summary (1-2 sentences max). Do not state the game title in the summary.
+    2.  For "players": Find the specific number of players (e.g., "Up to 4 players"). If none is mentioned, use general categories (e.g., "Single-player, Online Co-op").
+    Your final output must be a valid JSON object.
+    """
+    try:
+        client = openai.OpenAI()
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are a helpful game analyst that always responds in valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3, max_tokens=100
+        )
+        content = response.choices[0].message.content
+        return json.loads(content)
+    except Exception as e:
+        logger.error(f"Error processing LLM response: {e}")
+    return None
+
+def format_price(details: dict) -> str:
+    if details.get("is_free", False):
+        return "Free"
+    if "price_overview" in details:
+        return details["price_overview"]["final_formatted"]
+    return "Price not available"
+
+# --- Main Telegram Handler ---
+
 def get_itad_deal(app_id: str, game_name: str) -> dict | None:
     """
     Fetches the best deal using the ITAD API with correct POST method for prices.
@@ -104,49 +142,14 @@ def get_itad_deal(app_id: str, game_name: str) -> dict | None:
                     return {
                         "price": best_deal["price"]["amount"],
                         "store": best_deal["shop"]["name"],
-                        "cut": best_deal["cut"]
+                        "cut": best_deal["cut"],
+                        "url": best_deal.get("url", "")  # Add the purchase URL
                     }
         except (requests.exceptions.RequestException, IndexError, KeyError) as e:
             logger.error(f"ITAD Price lookup failed for game ID '{game_id}': {e}")
     
     logger.warning(f"Could not find any ITAD data for '{game_name}'")
     return None
-
-def analyze_game_with_llm(details: dict) -> dict | None:
-    game_name = details.get("name", "Unknown Game")
-    description = details.get("detailed_description", "")
-    categories = [cat['description'] for cat in details.get('categories', [])]
-
-    prompt = f"""
-    You are an expert game analyst. Analyze the provided game information for "{game_name}" and return a JSON object with two keys: "summary" and "players".
-    Instructions:
-    1.  For "summary": Write a short, engaging summary (1-2 sentences max). Do not state the game title in the summary.
-    2.  For "players": Find the specific number of players (e.g., "Up to 4 players"). If none is mentioned, use general categories (e.g., "Single-player, Online Co-op").
-    Your final output must be a valid JSON object.
-    """
-    try:
-        client = openai.OpenAI()
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": "You are a helpful game analyst that always responds in valid JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3, max_tokens=100
-        )
-        content = response.choices[0].message.content
-        return json.loads(content)
-    except Exception as e:
-        logger.error(f"Error processing LLM response: {e}")
-    return None
-
-def format_price(details: dict) -> str:
-    if details.get("is_free", False):
-        return "Free"
-    if "price_overview" in details:
-        return details["price_overview"]["final_formatted"]
-    return "Price not available"
 
 # --- Main Telegram Handler ---
 
@@ -175,19 +178,28 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     steam_price = format_price(game_details)
     rating_text = player_rating.get('review_score_desc', 'No rating found') if player_rating else 'No rating found'
     
+    # Create Steam store URL
+    steam_url = f"https://store.steampowered.com/app/{app_id}/"
+    
     reply_parts = [
-        f"**{game_name}**\n",
-        f"{rating_text}\n",
+        f"<b>{game_name}</b>",
+        f"👍 {rating_text}",
+        f"🎮 {analysis['players']}\n",
         f"{analysis['summary']}\n",
-        f"**Players:** {analysis['players']}\n",
-        f"**Price on Steam:** {steam_price}"
+        f"<b>Price on Steam:</b> <a href='{steam_url}'>{steam_price}</a>"
     ]
 
     if itad_deal:
-        deal_text = f"**Best Deal:** **${itad_deal['price']:.2f}** (-{itad_deal['cut']}%) at {itad_deal['store']}"
+        deal_url = itad_deal.get('url', '')
+        if deal_url:
+            # Make the best deal price a clickable link
+            deal_text = f"<b>Best Deal:</b> <a href='{deal_url}'><b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}</a>"
+        else:
+            # Fallback if no URL is provided
+            deal_text = f"<b>Best Deal:</b> <b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}"
         reply_parts.append(deal_text)
     
-    await update.message.reply_text("\n".join(reply_parts), parse_mode='Markdown', quote=True)
+    await update.message.reply_text("\n".join(reply_parts), parse_mode='HTML', quote=True)
 
 # --- Main Bot Function ---
 
