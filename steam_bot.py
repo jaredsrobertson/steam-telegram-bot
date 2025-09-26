@@ -10,32 +10,27 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 # --- Configuration ---
-# Load API keys from the .env file
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 STEAM_API_KEY = os.getenv("STEAM_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ITAD_API_KEY = os.getenv("ITAD_API_KEY")
 
-# Set up logging to see errors and bot status
+# --- Setup ---
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# Initialize the OpenAI client
 openai.api_key = OPENAI_API_KEY
 
 # --- Helper Functions ---
 
 def get_steam_app_id(url: str) -> str | None:
-    """Extracts the Steam App ID from a URL."""
     match = re.search(r'/app/(\d+)', url)
     return match.group(1) if match else None
 
 def get_steam_game_details(app_id: str) -> dict | None:
-    """Fetches game details from the official Steam API."""
     url = f"https://store.steampowered.com/api/appdetails?appids={app_id}"
     try:
         response = requests.get(url, timeout=10)
@@ -48,7 +43,6 @@ def get_steam_game_details(app_id: str) -> dict | None:
     return None
 
 def get_steam_player_rating(app_id: str) -> dict | None:
-    """Fetches the player rating summary from Steam's undocumented appreviews API."""
     url = f"https://store.steampowered.com/appreviews/{app_id}?json=1"
     try:
         response = requests.get(url, timeout=10)
@@ -61,42 +55,43 @@ def get_steam_player_rating(app_id: str) -> dict | None:
     return None
 
 def get_itad_deal(app_id: str, game_name: str) -> dict | None:
-    """Fetches the best current deal from IsThereAnyDeal.com, with a title-search fallback."""
-    game_plain = None
-    
-    # --- Attempt 1: Direct lookup using AppID (the original method) ---
-    try:
-        plain_url = f"https://api.isthereanydeal.com/v02/game/plain/?key={ITAD_API_KEY}&shop=steam&game_id=app%2F{app_id}"
-        response = requests.get(plain_url, timeout=10)
-        # A 404 here is a possible outcome, so we don't raise an error for it
-        if response.status_code == 200:
-            plain_data = response.json()
-            if plain_data and plain_data.get(".meta") and plain_data[".meta"].get("active"):
-                game_plain = plain_data["data"]["plain"]
-    except requests.exceptions.RequestException as e:
-        logger.error(f"ITAD Plain lookup (Attempt 1) failed: {e}")
+    """
+    Fetches the best deal using the modern ITAD v1 API, as suggested by the user.
+    """
+    game_slug = None # This is the new 'plain' identifier used by ITAD's API
 
-    # --- Attempt 2: Fallback search using game title if first attempt fails ---
-    if not game_plain:
-        logger.info(f"ITAD Plain lookup failed for AppID {app_id}. Trying fallback search with title: '{game_name}'")
+    # --- Attempt 1: Look up the game slug using its Steam AppID ---
+    try:
+        lookup_url = f"https://api.isthereanydeal.com/v1/games/lookup?key={ITAD_API_KEY}&appid={app_id}"
+        response = requests.get(lookup_url, timeout=10)
+        response.raise_for_status()
+        lookup_data = response.json()
+        if lookup_data.get("found"):
+            game_slug = lookup_data["game"]["slug"]
+    except requests.exceptions.RequestException as e:
+        logger.error(f"ITAD AppID lookup failed: {e}")
+
+    # --- Attempt 2: Fallback to searching by title if AppID lookup fails ---
+    if not game_slug:
+        logger.info(f"ITAD AppID lookup failed. Trying fallback search with title: '{game_name}'")
         try:
-            search_url = f"https://api.isthereanydeal.com/v01/search/search/?key={ITAD_API_KEY}&q={requests.utils.quote(game_name)}&limit=1"
-            response = requests.get(search_url, timeout=10)
+            lookup_url = f"https://api.isthereanydeal.com/v1/games/lookup?key={ITAD_API_KEY}&title={requests.utils.quote(game_name)}"
+            response = requests.get(lookup_url, timeout=10)
             response.raise_for_status()
-            search_data = response.json()
-            if search_data and search_data.get("data") and search_data["data"].get("list"):
-                game_plain = search_data["data"]["list"][0]["plain"]
+            lookup_data = response.json()
+            if lookup_data.get("found"):
+                game_slug = lookup_data["game"]["slug"]
         except requests.exceptions.RequestException as e:
-            logger.error(f"ITAD Title search (Attempt 2) failed: {e}")
+            logger.error(f"ITAD Title search fallback failed: {e}")
             return None
 
-    # --- If we have a 'plain' from either method, get the price ---
-    if game_plain:
+    # --- If we have a slug, get the best price for that game ---
+    if game_slug:
         try:
-            prices_url = f"https://api.isthereanydeal.com/v01/game/prices/?key={ITAD_API_KEY}&plains={game_plain}&shops=steam,humble,gog,fanatical,greenmangaming,wingamestore"
+            prices_url = f"https://api.isthereanydeal.com/v01/game/prices/?key={ITAD_API_KEY}&plains={game_slug}&shops=steam,humble,gog,fanatical,greenmangaming,wingamestore"
             response = requests.get(prices_url, timeout=10)
             response.raise_for_status()
-            price_data = response.json()["data"][game_plain]
+            price_data = response.json()["data"][game_slug]
             if price_data and price_data.get("list"):
                 best_deal = price_data["list"][0]
                 return {
@@ -105,30 +100,21 @@ def get_itad_deal(app_id: str, game_name: str) -> dict | None:
                     "cut": best_deal["price_cut"]
                 }
         except requests.exceptions.RequestException as e:
-            logger.error(f"ITAD Price lookup failed: {e}")
+            logger.error(f"ITAD Price lookup failed for slug '{game_slug}': {e}")
     
     logger.warning(f"Could not find any ITAD data for '{game_name}'")
     return None
 
 def analyze_game_with_llm(details: dict) -> dict | None:
-    """Uses an LLM to summarize and reason about the specific player count."""
     game_name = details.get("name", "Unknown Game")
     description = details.get("detailed_description", "")
     categories = [cat['description'] for cat in details.get('categories', [])]
 
     prompt = f"""
     You are an expert game analyst. Analyze the provided game information for "{game_name}" and return a JSON object with two keys: "summary" and "players".
-
-    Game Description: "{description}"
-    API Categories: {categories}
-
-    Instructions for your analysis:
-    1.  For the "summary" key: Write a short, engaging summary of the game (1-2 sentences max).
-    2.  For the "players" key:
-        -   First, carefully read the game description to find the specific number of players.
-        -   If a specific count is found, return that (e.g., "Up to 4 players", "8 vs 8 Multiplayer", "2-Player Co-op").
-        -   If no specific number is mentioned, fall back to using the general API Categories provided (e.g., "Single-player, Online Multi-player").
-
+    Instructions:
+    1.  For "summary": Write a short, engaging summary (1-2 sentences max).
+    2.  For "players": Find the specific number of players (e.g., "Up to 4 players"). If none is mentioned, use general categories (e.g., "Single-player, Online Co-op").
     Your final output must be a valid JSON object.
     """
     try:
@@ -149,33 +135,28 @@ def analyze_game_with_llm(details: dict) -> dict | None:
     return None
 
 def format_price(details: dict) -> str:
-    """Formats the price information from the Steam API."""
     if details.get("is_free", False):
         return "Free"
     if "price_overview" in details:
         return details["price_overview"]["final_formatted"]
     return "Price not available"
 
-# --- Telegram Bot Handlers ---
+# --- Main Telegram Handler ---
 
 async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """The main function to handle messages containing Steam links."""
     message_text = update.message.text
     app_id = get_steam_app_id(message_text)
     if not app_id: return
 
     logger.info(f"Detected Steam link for App ID: {app_id}")
     
-    # --- Step 1: Get primary game details first ---
     game_details = get_steam_game_details(app_id)
     if not game_details:
         await update.message.reply_text("Sorry, I couldn't fetch details for that game.", quote=True)
         return
         
-    # --- Step 2: Define game_name immediately ---
     game_name = game_details.get("name", "Unknown Game")
 
-    # --- Step 3: Now, gather all other data ---
     player_rating = get_steam_player_rating(app_id)
     itad_deal = get_itad_deal(app_id, game_name)
     analysis = analyze_game_with_llm(game_details)
@@ -184,16 +165,14 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("Sorry, the summary AI is having trouble right now.", quote=True)
         return
 
-    # --- Step 4: Build and send the final message ---
     steam_price = format_price(game_details)
     rating_text = player_rating.get('review_score_desc', 'No rating found') if player_rating else 'No rating found'
     
     reply_parts = [
-        f"🎮 **{game_name}** 🎮\n",
-        f"**Summary:** {analysis['summary']}\n",
-        f"**Players:** {analysis['players']}",
+        f"**{game_name}** - ",
+        f"**{analysis['summary']}\n",
         f"**Steam Rating:** {rating_text}\n",
-        "---",
+        f"**Players:** {analysis['players']}\n",
         f"**Price on Steam:** {steam_price}"
     ]
 
@@ -206,7 +185,6 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 # --- Main Bot Function ---
 
 def main() -> None:
-    """Starts the Telegram bot."""
     if not all([TELEGRAM_TOKEN, STEAM_API_KEY, OPENAI_API_KEY, ITAD_API_KEY]):
         logger.error("One or more API keys are missing! Check your .env file.")
         return
@@ -216,7 +194,6 @@ def main() -> None:
 
     logger.info("Bot is starting...")
     application.run_polling()
-
 
 if __name__ == "__main__":
     main()
