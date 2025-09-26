@@ -54,7 +54,25 @@ def get_steam_player_rating(app_id: str) -> dict | None:
         logger.error(f"Error fetching Steam player rating: {e}")
     return None
 
-def get_game_genres(details: dict) -> str:
+def get_rating_emoji(rating_text: str) -> str:
+    """Get colored emoji based on Steam rating"""
+    rating_lower = rating_text.lower()
+    
+    # Positive ratings (green)
+    if any(word in rating_lower for word in ['overwhelmingly positive', 'very positive', 'mostly positive', 'positive']):
+        return "🟢"
+    
+    # Mixed ratings (yellow)
+    elif any(word in rating_lower for word in ['mixed', 'mostly negative']):
+        return "🟡"
+    
+    # Negative ratings (red)
+    elif any(word in rating_lower for word in ['overwhelmingly negative', 'very negative', 'negative']):
+        return "🔴"
+    
+    # Default for unknown ratings
+    else:
+        return "⚪"
     """Extract and format game genres from Steam API data"""
     genres = details.get('genres', [])
     if genres:
@@ -75,30 +93,50 @@ def get_game_genres(details: dict) -> str:
     return "Genre not available"
 
 def analyze_players_with_llm(details: dict) -> str | None:
-    """Use LLM to analyze player count information"""
+    """Use LLM to analyze maximum player count"""
     game_name = details.get("name", "Unknown Game")
     categories = [cat['description'] for cat in details.get('categories', [])]
+    description = details.get("detailed_description", "")
+    short_description = details.get("short_description", "")
 
     prompt = f"""
-    You are an expert game analyst. Analyze the provided game information for "{game_name}" and determine the player count/multiplayer options.
-    
+    Analyze this game data and find the MAXIMUM number of players who can play together simultaneously.
+
+    Game: {game_name}
     Categories: {categories}
-    
-    Return ONLY the player information in this format:
-    - For specific numbers: "Up to 4 players", "2-8 players", etc.
-    - For general categories: "Single-player", "Single-player, Co-op", "Single-player, Online Multiplayer", etc.
-    
-    Be concise and specific. Do not include any other text or explanation.
+    Description: {description[:500]}
+    Short Description: {short_description}
+
+    Look for phrases like:
+    - "up to X players"
+    - "play with X friends" (add 1 for the host)
+    - "X-player co-op"
+    - "supports X players"
+    - "multiplayer for X"
+
+    Return ONLY ONE of these formats:
+    - If you find a specific number: "Up to X players" (where X is the maximum)
+    - If multiplayer but no specific number: "Multiplayer"
+    - If only single-player: "Single-player"
+
+    Examples:
+    - "play with up to 3 friends" → "Up to 4 players"
+    - "4-player co-op" → "Up to 4 players" 
+    - "supports up to 16 players" → "Up to 16 players"
+    - "online multiplayer" with no number → "Multiplayer"
+    - no multiplayer mentioned → "Single-player"
+
+    Return ONLY the result, no explanation.
     """
     try:
         client = openai.OpenAI()
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a helpful game analyst that provides concise player count information."},
+                {"role": "system", "content": "You are an expert at extracting maximum player counts from game descriptions. Be precise and follow the format exactly."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3, max_tokens=50
+            temperature=0.1, max_tokens=30
         )
         content = response.choices[0].message.content.strip()
         return content
@@ -201,26 +239,27 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     steam_price = format_price(game_details)
     rating_text = player_rating.get('review_score_desc', 'No rating found') if player_rating else 'No rating found'
+    rating_emoji = get_rating_emoji(rating_text)
     
     # Create Steam store URL
     steam_url = f"https://store.steampowered.com/app/{app_id}/"
     
     reply_parts = [
         f"<b>{game_name}</b>",
-        f"👍 {rating_text}",
-        f"🎯 {game_genre}",
-        f"🎮 {player_analysis}\n",
-        f"<b>Price on Steam:</b> <a href='{steam_url}'>{steam_price}</a>"
+        f"{rating_emoji} <i>{rating_text}</i>\n",
+        f"🏷️ {game_genre}",
+        f"👥 {player_analysis}\n",
+        f"💰 <b>Price on Steam:</b> <a href='{steam_url}'>{steam_price}</a>"
     ]
 
     if itad_deal:
         deal_url = itad_deal.get('url', '')
         if deal_url:
             # Make the best deal price a clickable link
-            deal_text = f"<b>Best Deal:</b> <a href='{deal_url}'><b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}</a>"
+            deal_text = f"🔥 <b>Best Deal:</b> <a href='{deal_url}'><b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}</a>"
         else:
             # Fallback if no URL is provided
-            deal_text = f"<b>Best Deal:</b> <b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}"
+            deal_text = f"🔥 <b>Best Deal:</b> <b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}"
         reply_parts.append(deal_text)
     
     await update.message.reply_text("\n".join(reply_parts), parse_mode='HTML', quote=True, disable_web_page_preview=True)
@@ -236,7 +275,26 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_steam_link))
 
     logger.info("Bot is starting...")
-    application.run_polling()
+    
+    # Set up signal handlers for graceful shutdown
+    import signal
+    import sys
+    
+    def signal_handler(sig, frame):
+        logger.info("Received shutdown signal, stopping bot...")
+        application.stop()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        # Drop pending updates and start fresh
+        application.run_polling(drop_pending_updates=True, close_loop=False)
+    except Exception as e:
+        logger.error(f"Bot encountered an error: {e}")
+    finally:
+        logger.info("Bot stopped.")
 
 if __name__ == "__main__":
     main()
