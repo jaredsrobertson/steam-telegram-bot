@@ -56,23 +56,23 @@ def get_steam_player_rating(app_id: str) -> dict | None:
 
 def get_itad_deal(app_id: str, game_name: str) -> dict | None:
     """
-    Fetches the best deal using the ITAD API with correct GET method for prices.
+    Fetches the best deal using the ITAD API with correct POST method for prices.
     """
-    game_slug = None
+    game_id = None
 
-    # Step 1: Look up the game 'slug' using its Steam AppID
+    # Step 1: Look up the game ID using its Steam AppID
     try:
         lookup_url = f"https://api.isthereanydeal.com/games/lookup/v1?key={ITAD_API_KEY}&appid={app_id}"
         response = requests.get(lookup_url, timeout=10)
         response.raise_for_status()
         lookup_data = response.json()
         if lookup_data.get("found"):
-            game_slug = lookup_data["game"]["slug"]
+            game_id = lookup_data["game"]["id"]  # Use 'id' not 'slug'
     except requests.exceptions.RequestException as e:
         logger.error(f"ITAD AppID lookup failed: {e}")
 
     # Step 2: Fallback to searching by title if AppID lookup fails
-    if not game_slug:
+    if not game_id:
         logger.info(f"ITAD AppID lookup failed. Trying fallback search with title: '{game_name}'")
         try:
             lookup_url = f"https://api.isthereanydeal.com/games/lookup/v1?key={ITAD_API_KEY}&title={requests.utils.quote(game_name)}"
@@ -80,44 +80,34 @@ def get_itad_deal(app_id: str, game_name: str) -> dict | None:
             response.raise_for_status()
             lookup_data = response.json()
             if lookup_data.get("found"):
-                game_slug = lookup_data["game"]["slug"]
+                game_id = lookup_data["game"]["id"]  # Use 'id' not 'slug'
         except requests.exceptions.RequestException as e:
             logger.error(f"ITAD Title search fallback failed: {e}")
             return None
 
-    # Step 3: If we have a slug, get the best prices using a GET request
-    if game_slug:
+    # Step 3: If we have a game ID, get the best prices using correct POST request
+    if game_id:
         try:
-            # Build the URL with query parameters for GET request
-            shops = ["steam", "humble", "gog", "fanatical", "greenmangaming", "wingamestore"]
-            shops_param = "&".join([f"shops[]={shop}" for shop in shops])
-            prices_url = f"https://api.isthereanydeal.com/games/prices/v2?key={ITAD_API_KEY}&id={game_slug}&{shops_param}"
+            prices_url = f"https://api.isthereanydeal.com/games/prices/v2?key={ITAD_API_KEY}"
             
-            # Use GET request instead of POST
-            response = requests.get(prices_url, timeout=10)
+            # POST request body should be a JSON array of game IDs
+            payload = [game_id]
+            
+            response = requests.post(prices_url, json=payload, timeout=10)
             response.raise_for_status()
             
             price_data = response.json()
-            # The response structure might be different for GET vs POST
             if price_data and isinstance(price_data, list) and len(price_data) > 0:
                 game_data = price_data[0]
-                if game_data.get("deals"):
+                if game_data.get("deals") and len(game_data["deals"]) > 0:
                     best_deal = game_data["deals"][0]
                     return {
                         "price": best_deal["price"]["amount"],
                         "store": best_deal["shop"]["name"],
                         "cut": best_deal["cut"]
                     }
-            elif price_data and price_data.get("deals"):
-                # Alternative response structure
-                best_deal = price_data["deals"][0]
-                return {
-                    "price": best_deal["price"]["amount"],
-                    "store": best_deal["shop"]["name"],
-                    "cut": best_deal["cut"]
-                }
         except (requests.exceptions.RequestException, IndexError, KeyError) as e:
-            logger.error(f"ITAD Price lookup failed for slug '{game_slug}': {e}")
+            logger.error(f"ITAD Price lookup failed for game ID '{game_id}': {e}")
     
     logger.warning(f"Could not find any ITAD data for '{game_name}'")
     return None
