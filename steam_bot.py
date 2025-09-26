@@ -56,13 +56,12 @@ def get_steam_player_rating(app_id: str) -> dict | None:
 
 def get_itad_deal(app_id: str, game_name: str) -> dict | None:
     """
-    Fetches the best deal using the modern ITAD API v1 and v2, per official documentation.
+    Fetches the best deal using the ITAD API, now with the correct POST method for prices.
     """
-    game_slug = None # This is the ITAD identifier we need
+    game_slug = None
 
-    # --- Step 1: Look up the game 'slug' using its Steam AppID ---
+    # Step 1: Look up the game 'slug' using its Steam AppID
     try:
-        # Use the /games/lookup/v1 endpoint
         lookup_url = f"https://api.isthereanydeal.com/games/lookup/v1?key={ITAD_API_KEY}&appid={app_id}"
         response = requests.get(lookup_url, timeout=10)
         response.raise_for_status()
@@ -72,7 +71,7 @@ def get_itad_deal(app_id: str, game_name: str) -> dict | None:
     except requests.exceptions.RequestException as e:
         logger.error(f"ITAD AppID lookup failed: {e}")
 
-    # --- Step 2: Fallback to searching by title if AppID lookup fails ---
+    # Step 2: Fallback to searching by title if AppID lookup fails
     if not game_slug:
         logger.info(f"ITAD AppID lookup failed. Trying fallback search with title: '{game_name}'")
         try:
@@ -86,17 +85,21 @@ def get_itad_deal(app_id: str, game_name: str) -> dict | None:
             logger.error(f"ITAD Title search fallback failed: {e}")
             return None
 
-    # --- Step 3: If we have a slug, get the best prices for that game ---
+    # Step 3: If we have a slug, get the best prices using a POST request
     if game_slug:
         try:
-            # Use the /games/prices/v2 endpoint
-            prices_url = f"https://api.isthereanydeal.com/games/prices/v2?key={ITAD_API_KEY}&plains={game_slug}&shops=steam,humble,gog,fanatical,greenmangaming,wingamestore"
-            response = requests.get(prices_url, timeout=10)
+            prices_url = f"https://api.isthereanydeal.com/games/prices/v2?key={ITAD_API_KEY}"
+            payload = {
+                "plains": [game_slug],
+                "shops": ["steam", "humble", "gog", "fanatical", "greenmangaming", "wingamestore"]
+            }
+            # The fix is here: using requests.post() with a json payload
+            response = requests.post(prices_url, json=payload, timeout=10)
             response.raise_for_status()
-            # The response is a list, so we take the first item
+            
             price_data = response.json()[0]
             if price_data and price_data.get("deals"):
-                best_deal = price_data["deals"][0] # The first deal is the best
+                best_deal = price_data["deals"][0]
                 return {
                     "price": best_deal["price"]["amount"],
                     "store": best_deal["shop"]["name"],
@@ -116,7 +119,7 @@ def analyze_game_with_llm(details: dict) -> dict | None:
     prompt = f"""
     You are an expert game analyst. Analyze the provided game information for "{game_name}" and return a JSON object with two keys: "summary" and "players".
     Instructions:
-    1.  For "summary": Write a short, engaging summary (1-2 sentences max). Do not state the game's title in the summary.
+    1.  For "summary": Write a short, engaging summary (1-2 sentences max). Do not state the game title in the summary.
     2.  For "players": Find the specific number of players (e.g., "Up to 4 players"). If none is mentioned, use general categories (e.g., "Single-player, Online Co-op").
     Your final output must be a valid JSON object.
     """
@@ -173,9 +176,9 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     
     reply_parts = [
         f"**{game_name}**\n",
+        f"{rating_text}\n",
         f"{analysis['summary']}\n",
-        f"**Players:** {analysis['players']}",
-        f"**Steam Rating:** {rating_text}\n",
+        f"**Players:** {analysis['players']}\n",
         f"**Price on Steam:** {steam_price}"
     ]
 
