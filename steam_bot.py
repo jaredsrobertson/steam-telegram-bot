@@ -4,9 +4,6 @@ import json
 import logging
 import requests
 import openai
-import asyncio
-import signal
-import sys
 from dotenv import load_dotenv
 
 from telegram import Update
@@ -26,9 +23,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 openai.api_key = OPENAI_API_KEY
-
-# Global shutdown flag
-shutdown_event = asyncio.Event()
 
 # --- Helper Functions ---
 
@@ -254,8 +248,7 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     steam_url = f"https://store.steampowered.com/app/{app_id}/"
     
     reply_parts = [
-        f"\n",
-        f"<b>{game_name}</b>",
+        f"\n\n<b>{game_name}</b>",
         f"{rating_emoji} <i>{rating_text}</i>",
         f"🏷️ {game_genre}\n",
         f"👥 <b>{player_analysis}</b>\n",
@@ -279,103 +272,18 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         disable_web_page_preview=True
     )
 
-# --- Shutdown Handlers ---
-
-def signal_handler(signum, frame):
-    """Handle shutdown signals"""
-    logger.info(f"Received signal {signum}, initiating shutdown...")
-    shutdown_event.set()
-
-async def shutdown_application(application):
-    """Gracefully shutdown the application"""
-    logger.info("Shutting down application...")
-    try:
-        # Stop the updater first (this stops polling)
-        if application.updater.running:
-            await application.updater.stop()
-            logger.info("Updater stopped")
-        
-        # Then stop the application
-        await application.stop()
-        logger.info("Application stopped")
-        
-        # Finally shutdown
-        await application.shutdown()
-        logger.info("Application shutdown complete")
-    except Exception as e:
-        logger.error(f"Error during shutdown: {e}")
-        # Force shutdown if graceful shutdown fails
-        try:
-            await application.updater.stop()
-            await application.stop()
-            await application.shutdown()
-        except:
-            pass
-
 # --- Main Bot Function ---
 
-async def main():
+def main() -> None:
     if not all([TELEGRAM_TOKEN, STEAM_API_KEY, OPENAI_API_KEY, ITAD_API_KEY]):
         logger.error("One or more API keys are missing! Check your .env file.")
         return
 
-    # Setup signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    # Build application with proper timeout settings
-    application = (
-        Application.builder()
-        .token(TELEGRAM_TOKEN)
-        .get_updates_read_timeout(30)      # 30 second read timeout
-        .get_updates_write_timeout(30)     # 30 second write timeout
-        .get_updates_connect_timeout(30)   # 30 second connect timeout
-        .read_timeout(30)                  # General read timeout
-        .write_timeout(30)                 # General write timeout
-        .build()
-    )
-    
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_steam_link))
 
     logger.info("Bot is starting...")
-    
-    try:
-        # Initialize and start the bot
-        await application.initialize()
-        await application.start()
-        
-        # Clear any pending updates and start polling
-        await application.updater.start_polling(
-            drop_pending_updates=True,
-            poll_interval=1.0,
-            timeout=10
-        )
-        
-        logger.info("Bot started successfully")
-        
-        # Wait for shutdown signal
-        await shutdown_event.wait()
-        
-    except Exception as e:
-        logger.error(f"Bot encountered an error: {e}")
-    finally:
-        # Graceful shutdown
-        await shutdown_application(application)
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    # Clear any existing Telegram sessions first
-    try:
-        import requests
-        # Delete webhook if set and clear pending updates
-        webhook_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook"
-        requests.get(webhook_url, timeout=5)
-        
-        updates_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?offset=-1&timeout=1"
-        requests.get(updates_url, timeout=5)
-        
-        logger.info("Cleared Telegram session")
-    except Exception as e:
-        logger.warning(f"Could not clear Telegram session: {e}")
-    
-    # Run the bot
-    asyncio.run(main())
+    main()
