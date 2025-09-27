@@ -253,9 +253,7 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     reply_parts = [
         f"⠀",
         f"<u><b>{game_name}</b></u>",
-        f"{rating_emoji} <i>{rating_text}</i>",
-        f"🏷️ {game_genre}\n",
-        f"👥 <b>{player_analysis}</b>\n",
+        f"<blockquote>{rating_emoji} <i>{rating_text}</i>\n🏷️ {game_genre}\n👥 <b>{player_analysis}</b></blockquote>",
         f"💰 <b>Steam:</b> <u><a href='{steam_url}'>{steam_price}🔗</a></u>"
     ]
 
