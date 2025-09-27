@@ -252,19 +252,18 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     
     reply_parts = [
         f"⠀",
-        f"&nbsp;",
-        f"<b>{game_name}</b>",
+        f"<u><b>{game_name}</b></u>",
         f"{rating_emoji} <i>{rating_text}</i>",
         f"🏷️ {game_genre}\n",
         f"👥 <b>{player_analysis}</b>\n",
-        f"💰 <b>Steam:</b> <a href='{steam_url}'>{steam_price}🔗</a>"
+        f"💰 <b>Steam:</b> <u><a href='{steam_url}'>{steam_price}🔗</a></u>"
     ]
 
     if itad_deal:
         deal_url = itad_deal.get('url', '')
         if deal_url:
             # Make the best deal price a clickable link
-            deal_text = f"🔥 <b>Best Deal:</b> <a href='{deal_url}'><b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}🔗</a>"
+            deal_text = f"🔥 <b>Best Deal:</b> <u><a href='{deal_url}'><b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}🔗</a></u>"
         else:
             # Fallback if no URL is provided
             deal_text = f"🔥 <b>Best Deal:</b> <b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}"
