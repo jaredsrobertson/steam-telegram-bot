@@ -4,6 +4,9 @@ import json
 import logging
 import requests
 import openai
+import subprocess
+import time
+import sys
 from dotenv import load_dotenv
 
 from telegram import Update
@@ -23,6 +26,50 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 openai.api_key = OPENAI_API_KEY
+
+def kill_other_instances():
+    """Kill any other instances of this bot before starting"""
+    try:
+        current_pid = os.getpid()
+        logger.info(f"Current process PID: {current_pid}")
+        
+        # Find only direct python processes, not shell wrappers
+        result = subprocess.run(
+            ["pgrep", "-f", "^python.*steam_bot\\.py$"], 
+            capture_output=True, 
+            text=True, 
+            timeout=10
+        )
+        
+        if result.returncode == 0:
+            pids = result.stdout.strip().split('\n')
+            other_pids = [pid for pid in pids if pid and int(pid) != current_pid]
+            
+            if other_pids:
+                logger.info(f"Found other bot instances: {other_pids}")
+                
+                # Kill other instances
+                for pid in other_pids:
+                    try:
+                        subprocess.run(["kill", "-TERM", pid], timeout=5)
+                        logger.info(f"Sent TERM signal to PID {pid}")
+                    except subprocess.TimeoutExpired:
+                        logger.warning(f"Timeout killing PID {pid}")
+                
+                # Wait a moment for graceful shutdown
+                time.sleep(2)
+                        
+                logger.info("Cleanup complete")
+            else:
+                logger.info("No other bot instances found")
+        else:
+            logger.info("No existing bot processes found")
+            
+    except FileNotFoundError:
+        logger.info("pgrep not available, skipping cleanup")
+    except Exception as e:
+        logger.warning(f"Error during cleanup: {e}")
+        # If there's an error, just continue without cleanup
 
 # --- Helper Functions ---
 
@@ -280,6 +327,9 @@ def main() -> None:
     if not all([TELEGRAM_TOKEN, STEAM_API_KEY, OPENAI_API_KEY, ITAD_API_KEY]):
         logger.error("One or more API keys are missing! Check your .env file.")
         return
+
+    # Kill any other instances before starting
+    kill_other_instances()
 
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_steam_link))
