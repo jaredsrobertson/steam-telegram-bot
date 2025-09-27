@@ -253,24 +253,24 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     reply_parts = [
         f"⠀",
         f"<u><b>{game_name}</b></u>",
-        f"<blockquote>{rating_emoji} <i>{rating_text}</i>\n🏷️ {game_genre}\n👥 <b>{player_analysis}</b></blockquote>",
-        f"💰 <b>Steam:</b> <u><a href='{steam_url}'>{steam_price}🔗</a></u>"
+        f"<blockquote>{rating_emoji} <i>{rating_text}</i>\n🏷️ {game_genre}\n👥 <b>{player_analysis}</b></blockquote>\n",
+        f"💰 <b>Steam:</b> <u><a href='{steam_url}'>{steam_price}</a></u>\n"
     ]
 
     if itad_deal:
         deal_url = itad_deal.get('url', '')
         if deal_url:
             # Make the best deal price a clickable link
-            deal_text = f"🔥 <b>Best Deal:</b> <u><a href='{deal_url}'><b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}🔗</a></u>"
+            deal_text = f"🔥 <b>Best Deal:</b> <u><a href='{deal_url}'><b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}</a></u>\n"
         else:
             # Fallback if no URL is provided
-            deal_text = f"🔥 <b>Best Deal:</b> <b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}"
+            deal_text = f"🔥 <b>Best Deal:</b> <b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}\n"
         reply_parts.append(deal_text)
     
     g2a_search_url = f"https://www.g2a.com/search?query={requests.utils.quote(game_name)}"
     loaded_search_url = f"https://www.loaded.com/search?q={requests.utils.quote(game_name)}"
 
-    gray_market_text = f"⚠️ <b>Gray market:</b> <a href='{g2a_search_url}'>G2A🔗</a> | <a href='{loaded_search_url}'>Loaded🔗</a>"
+    gray_market_text = f"⚠️ <b>Gray market:</b> <a href='{g2a_search_url}'>G2A</a> | <a href='{loaded_search_url}'>Loaded</a>\n"
     reply_parts.append(gray_market_text)
     
     await update.message.reply_text(
