@@ -254,12 +254,12 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     steam_url = f"https://store.steampowered.com/app/{app_id}/"
     
     reply_parts = [
-        f"",
-        f"<b>{game_name}</b>",
-        f"{rating_emoji} <code>{rating_text}</code>\n",
-        f"🏷️ <i>{game_genre}</i>",
-        f"👥 {player_analysis}\n",
-        f"💰 <b>Steam:</b> <a href='{steam_url}'>{steam_price}🔗</a>"
+        f"/n",
+        f"*{game_name}*",
+        f">{rating_emoji} _{rating_text}_\n",
+        f">🏷️ {game_genre}",
+        f">👥 {player_analysis}\n",
+        f"💰 _Steam:_ <a href='{steam_url}'>{steam_price}🔗</a>"
     ]
 
     if itad_deal:
@@ -274,7 +274,7 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     
     await update.message.reply_text(
         "\n".join(reply_parts), 
-        parse_mode='HTML', 
+        parse_mode='MarkdownV2', 
         quote=True, 
         disable_web_page_preview=True
     )
