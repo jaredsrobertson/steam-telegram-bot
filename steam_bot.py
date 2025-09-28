@@ -131,20 +131,37 @@ def analyze_players_with_llm(details: dict) -> str | None:
     - "online multiplayer" with no number → "Multiplayer"
     - no multiplayer mentioned → "Single-player"
 
+    If the provided information doesn't contain clear player count details, you should search for "{game_name} maximum players multiplayer" to find the answer.
+
     Return ONLY the result, no explanation.
     """
     try:
         client = openai.OpenAI()
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",  # Need GPT-4 for function calling
             messages=[
-                {"role": "system", "content": "You are an expert at extracting maximum player counts from game descriptions. Be precise and follow the format exactly."},
+                {"role": "system", "content": "You are an expert at finding maximum player counts for games. You can search the web when needed."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1, max_tokens=30
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the web for information",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string"}
+                            }
+                        }
+                    }
+                }
+            ],
+            temperature=0.1, 
+            max_tokens=50
         )
-        content = response.choices[0].message.content.strip()
-        return content
+        # Handle function calls and responses...
     except Exception as e:
         logger.error(f"Error processing LLM response: {e}")
     return None
@@ -207,7 +224,6 @@ def get_itad_deal(app_id: str, game_name: str) -> dict | None:
                     return {
                         "price": best_deal["price"]["amount"],
                         "store": best_deal["shop"]["name"],
-                        "cut": best_deal["cut"],
                         "url": best_deal.get("url", "")  # Add the purchase URL
                     }
         except (requests.exceptions.RequestException, IndexError, KeyError) as e:
@@ -259,12 +275,15 @@ async def handle_steam_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if itad_deal:
         deal_url = itad_deal.get('url', '')
+        store_name = itad_deal['store']
+        deal_price = f"${itad_deal['price']:.2f}"
+
         if deal_url:
             # Make the best deal price a clickable link
-            deal_text = f"🔥 <b>Best Deal:</b> <u><a href='{deal_url}'><b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}</a></u>\n"
+            deal_text = f"🔥 {store_name}: <u><a href='{deal_url}'><b>{deal_price}</b></a></u>\n"
         else:
             # Fallback if no URL is provided
-            deal_text = f"🔥 <b>Best Deal:</b> <b>${itad_deal['price']:.2f}</b> (-{itad_deal['cut']}%) at {itad_deal['store']}\n"
+            deal_text = f"🔥 {store_name}: <b>{deal_price}</b>"
         reply_parts.append(deal_text)
     
     g2a_search_url = f"https://www.g2a.com/search?query={requests.utils.quote(game_name)}"
