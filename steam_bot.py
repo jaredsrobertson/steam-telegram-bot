@@ -106,6 +106,7 @@ def analyze_players_with_llm(details: dict) -> str | None:
 
     prompt = f"""
     Analyze this game data and find the MAXIMUM number of players who can play together simultaneously.
+    If you cannot determine an exact player count from the description, search the web to find an answer.
 
     Game: {game_name}
     Categories: {categories}
@@ -131,35 +132,20 @@ def analyze_players_with_llm(details: dict) -> str | None:
     - "online multiplayer" with no number → "Multiplayer"
     - no multiplayer mentioned → "Single-player"
 
-    If the provided information doesn't contain clear player count details, you should search for "{game_name} maximum players multiplayer" to find the answer.
-
     Return ONLY the result, no explanation.
     """
     try:
         client = openai.OpenAI()
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",  # Use a model you have access to
             messages=[
-                {"role": "system", "content": "You are an expert at extracting maximum player counts from game descriptions. You can search the web when needed."},
+                {"role": "system", "content": "You are an expert at extracting maximum player counts from game descriptions and finding info on the web. Be precise and follow the format exactly."},
                 {"role": "user", "content": prompt}
             ],
-            tools=[
-                {
-                    "type": "web_search"
-                }
-            ],
-            temperature=0.1, max_tokens=50
+            temperature=0.1, max_tokens=30
         )
-        
-        # Handle the response
-        message = response.choices[0].message
-        
-        # Extract the final answer
-        if message.content:
-            return message.content.strip()
-        else:
-            return "Multiplayer"  # Fallback
-            
+        content = response.choices[0].message.content.strip()
+        return content
     except Exception as e:
         logger.error(f"Error processing LLM response: {e}")
         return None
