@@ -138,33 +138,31 @@ def analyze_players_with_llm(details: dict) -> str | None:
     try:
         client = openai.OpenAI()
         response = client.chat.completions.create(
-            model="gpt-4o",  # Need GPT-4 for function calling
+            model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are an expert at finding maximum player counts for games. You can search the web when needed."},
+                {"role": "system", "content": "You are an expert at extracting maximum player counts from game descriptions. You can search the web when needed."},
                 {"role": "user", "content": prompt}
             ],
             tools=[
                 {
-                    "type": "function",
-                    "function": {
-                        "name": "web_search",
-                        "description": "Search the web for information",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {"type": "string"}
-                            }
-                        }
-                    }
+                    "type": "web_search"
                 }
             ],
-            temperature=0.1, 
-            max_tokens=50
+            temperature=0.1, max_tokens=50
         )
-        # Handle function calls and responses...
+        
+        # Handle the response
+        message = response.choices[0].message
+        
+        # Extract the final answer
+        if message.content:
+            return message.content.strip()
+        else:
+            return "Multiplayer"  # Fallback
+            
     except Exception as e:
         logger.error(f"Error processing LLM response: {e}")
-    return None
+        return None
 
 def format_price(details: dict) -> str:
     if details.get("is_free", False):
