@@ -25,7 +25,9 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-openai.api_key = OPENAI_API_KEY
+
+# OPTIMIZATION: Initialize OpenAI client globally once, rather than per-request
+openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # --- Helper Functions ---
 
@@ -135,9 +137,9 @@ def analyze_players_with_llm(details: dict) -> str | None:
     Return ONLY the result, no explanation.
     """
     try:
-        client = openai.OpenAI()
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",  # Use a model you have access to
+        # REFACTORED: Use the global openai_client instead of creating a new one
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are an expert at extracting maximum player counts from game descriptions and finding info on the web. Be precise and follow the format exactly."},
                 {"role": "user", "content": prompt}
